@@ -8,8 +8,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError
 
-from .config import Settings
-from .content import ABOUT, BOT_NAME, BOT_USERNAME, DESCRIPTION
+from .content import ABOUT, DESCRIPTION
 from .handlers import router
 
 
@@ -20,50 +19,43 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def configure_bot_profile(bot: Bot, settings: Settings) -> None:
-    """Configure profile fields supported by Telegram Bot API."""
-    try:
-        await bot.set_my_name(
-            name=settings.bot_name,
-            language_code="en",
-        )
-        await bot.set_my_description(
-            description=DESCRIPTION,
-            language_code="en",
-        )
-        await bot.set_my_short_description(
-            short_description=ABOUT,
-            language_code="en",
-        )
-        logger.info(
-            "Telegram profile configured for %s (%s)",
-            settings.bot_name,
-            settings.bot_username,
-        )
-    except TelegramAPIError:
-        logger.exception(
-            "Could not update one or more Telegram profile fields. "
-            "The bot will continue running."
-        )
+async def configure_bot_profile(bot: Bot, settings) -> None:
+    """Configure supported Telegram profile fields without blocking startup."""
+    profile_updates = (
+        ("name", bot.set_my_name(name=settings.bot_name, language_code="en")),
+        ("description", bot.set_my_description(description=DESCRIPTION, language_code="en")),
+        ("short description", bot.set_my_short_description(short_description=ABOUT, language_code="en")),
+    )
+
+    for label, request in profile_updates:
+        try:
+            await request
+            logger.info("Updated bot %s.", label)
+        except TelegramAPIError:
+            logger.exception("Could not update bot %s; continuing.", label)
 
 
 async def main() -> None:
-    settings = Settings.from_env()
+    from .config import Settings
 
+    settings = Settings.from_env()
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    dp = Dispatcher()
-    dp.include_router(router)
+    dispatcher = Dispatcher()
+    dispatcher.include_router(router)
 
     await configure_bot_profile(bot, settings)
 
-    logger.info("Starting %s %s", BOT_NAME, BOT_USERNAME)
-    await dp.start_polling(
-        bot,
-        allowed_updates=dp.resolve_used_update_types(),
-    )
+    logger.info("Starting %s (%s)", settings.bot_name, settings.bot_username)
+    try:
+        await dispatcher.start_polling(
+            bot,
+            allowed_updates=dispatcher.resolve_used_update_types(),
+        )
+    finally:
+        await bot.session.close()
 
 
 if __name__ == "__main__":
